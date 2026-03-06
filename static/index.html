@@ -1,0 +1,737 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CiteGuard — Citation Verification</title>
+<style>
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+:root {
+  --header-bg: #0d2b2a;
+  --header-accent: #1a5c58;
+  --bg: #f4f6f9;
+  --card-bg: #ffffff;
+  --text: #1e293b;
+  --text-muted: #64748b;
+  --border: #e2e8f0;
+  --green: #16a34a;
+  --green-bg: #dcfce7;
+  --orange: #d97706;
+  --orange-bg: #fef3c7;
+  --red: #dc2626;
+  --red-bg: #fee2e2;
+  --blue: #2563eb;
+  --blue-bg: #dbeafe;
+  --radius: 8px;
+  --shadow: 0 1px 3px rgba(0,0,0,0.08), 0 1px 2px rgba(0,0,0,0.06);
+  --shadow-lg: 0 4px 12px rgba(0,0,0,0.1), 0 2px 4px rgba(0,0,0,0.06);
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  line-height: 1.6;
+  min-height: 100vh;
+}
+
+/* ── Header ── */
+.header {
+  background: linear-gradient(135deg, var(--header-bg) 0%, var(--header-accent) 100%);
+  color: #fff;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+.header h1 {
+  font-size: 2rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  margin-bottom: 0.25rem;
+}
+.header h1 span {
+  color: #39c5bb;
+}
+.header p {
+  font-size: 0.95rem;
+  color: #94a3b8;
+  font-weight: 400;
+}
+
+/* ── Container ── */
+.container {
+  max-width: 960px;
+  margin: 0 auto;
+  padding: 2rem 1.5rem 4rem;
+}
+
+/* ── Upload Area ── */
+.upload-area {
+  background: var(--card-bg);
+  border: 2px dashed var(--border);
+  border-radius: var(--radius);
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+  position: relative;
+}
+.upload-area:hover,
+.upload-area.dragover {
+  border-color: var(--blue);
+  background: var(--blue-bg);
+}
+.upload-area.dragover {
+  border-style: solid;
+}
+.upload-icon {
+  width: 48px;
+  height: 48px;
+  margin: 0 auto 1rem;
+  color: var(--text-muted);
+}
+.upload-area h2 {
+  font-size: 1.1rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+.upload-area p {
+  font-size: 0.875rem;
+  color: var(--text-muted);
+}
+.upload-area input[type="file"] {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+.upload-btn {
+  display: inline-block;
+  margin-top: 1rem;
+  padding: 0.6rem 1.5rem;
+  background: var(--blue);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.upload-btn:hover { background: #1d4ed8; }
+.upload-btn:disabled {
+  background: var(--text-muted);
+  cursor: not-allowed;
+}
+.file-info {
+  margin-top: 0.75rem;
+  font-size: 0.85rem;
+  color: var(--text-muted);
+}
+.file-info.error { color: var(--red); font-weight: 600; }
+
+/* ── Progress ── */
+.progress-section {
+  display: none;
+  text-align: center;
+  padding: 3rem 1rem;
+}
+.spinner {
+  width: 48px;
+  height: 48px;
+  border: 4px solid var(--border);
+  border-top-color: var(--blue);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+  margin: 0 auto 1.25rem;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+.progress-section p {
+  font-size: 1rem;
+  color: var(--text-muted);
+  font-weight: 500;
+}
+.progress-dots::after {
+  content: '';
+  animation: dots 1.5s steps(4, end) infinite;
+}
+@keyframes dots {
+  0%  { content: ''; }
+  25% { content: '.'; }
+  50% { content: '..'; }
+  75% { content: '...'; }
+}
+
+/* ── Error Banner ── */
+.error-banner {
+  display: none;
+  background: var(--red-bg);
+  color: var(--red);
+  border: 1px solid var(--red);
+  border-radius: var(--radius);
+  padding: 1rem 1.25rem;
+  margin-bottom: 1.5rem;
+  font-weight: 500;
+  font-size: 0.9rem;
+}
+
+/* ── Summary ── */
+.summary-section {
+  display: none;
+}
+.summary-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
+.summary-card {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 1.25rem 1rem;
+  text-align: center;
+  box-shadow: var(--shadow);
+  border-top: 3px solid var(--border);
+}
+.summary-card.total   { border-top-color: var(--blue); }
+.summary-card.verified { border-top-color: var(--green); }
+.summary-card.suspect  { border-top-color: var(--orange); }
+.summary-card.notfound { border-top-color: var(--red); }
+.summary-card .count {
+  font-size: 1.75rem;
+  font-weight: 700;
+  line-height: 1;
+  margin-bottom: 0.25rem;
+}
+.summary-card.total .count    { color: var(--blue); }
+.summary-card.verified .count { color: var(--green); }
+.summary-card.suspect .count  { color: var(--orange); }
+.summary-card.notfound .count { color: var(--red); }
+.summary-card .label {
+  font-size: 0.8rem;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  font-weight: 600;
+}
+
+.risk-banner {
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  padding: 0.85rem 1.25rem;
+  margin-bottom: 1.5rem;
+  box-shadow: var(--shadow);
+  font-size: 0.95rem;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.risk-banner .dot {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.risk-banner.low  .dot { background: var(--green); }
+.risk-banner.medium .dot { background: var(--orange); }
+.risk-banner.high .dot { background: var(--red); }
+.risk-banner.low  { border-left: 4px solid var(--green); }
+.risk-banner.medium { border-left: 4px solid var(--orange); }
+.risk-banner.high { border-left: 4px solid var(--red); }
+
+/* ── Results Table ── */
+.results-table {
+  width: 100%;
+  background: var(--card-bg);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+}
+.results-table thead th {
+  background: #f8fafc;
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.8rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border);
+}
+.results-table tbody tr.citation-row {
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.results-table tbody tr.citation-row:hover {
+  background: #f8fafc;
+}
+.results-table tbody td {
+  padding: 0.75rem 1rem;
+  font-size: 0.9rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.results-table tbody tr:last-child td,
+.results-table tbody tr.detail-row:last-child td {
+  border-bottom: none;
+}
+.citation-text-cell {
+  max-width: 360px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.expand-icon {
+  display: inline-block;
+  width: 18px;
+  height: 18px;
+  transition: transform 0.2s;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.citation-row.expanded .expand-icon {
+  transform: rotate(90deg);
+}
+
+/* ── Badges ── */
+.badge {
+  display: inline-block;
+  padding: 0.2rem 0.65rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+.badge.verified  { background: var(--green-bg); color: var(--green); }
+.badge.suspect   { background: var(--orange-bg); color: var(--orange); }
+.badge.not_found { background: var(--red-bg); color: var(--red); }
+
+/* ── Confidence Bar ── */
+.confidence-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 100px;
+}
+.confidence-bar {
+  flex: 1;
+  height: 6px;
+  background: var(--border);
+  border-radius: 3px;
+  overflow: hidden;
+}
+.confidence-fill {
+  height: 100%;
+  border-radius: 3px;
+  transition: width 0.4s ease;
+}
+.confidence-num {
+  font-size: 0.82rem;
+  font-weight: 600;
+  min-width: 36px;
+  text-align: right;
+}
+
+/* ── Detail Row ── */
+.detail-row { display: none; }
+.detail-row.visible { display: table-row; }
+.detail-row td {
+  padding: 0 !important;
+  border-bottom: 1px solid var(--border);
+}
+.detail-content {
+  padding: 1rem 1.25rem 1.25rem;
+  background: #f8fafc;
+  font-size: 0.875rem;
+  line-height: 1.7;
+}
+.detail-content .detail-label {
+  font-weight: 700;
+  color: var(--text-muted);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  margin-top: 0.75rem;
+  margin-bottom: 0.15rem;
+}
+.detail-content .detail-label:first-child { margin-top: 0; }
+.detail-content .detail-value {
+  color: var(--text);
+  word-break: break-word;
+}
+.detail-content .detail-value code {
+  background: var(--blue-bg);
+  color: var(--blue);
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.84rem;
+}
+
+/* ── New Analysis Button ── */
+.new-analysis-btn {
+  display: inline-block;
+  margin-top: 2rem;
+  padding: 0.6rem 1.5rem;
+  background: var(--header-bg);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius);
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+.new-analysis-btn:hover { background: var(--header-accent); }
+
+/* ── Responsive ── */
+@media (max-width: 640px) {
+  .header h1 { font-size: 1.5rem; }
+  .header p { font-size: 0.85rem; }
+  .container { padding: 1.25rem 1rem 3rem; }
+  .upload-area { padding: 2rem 1rem; }
+  .summary-cards { grid-template-columns: repeat(2, 1fr); }
+  .results-table { display: block; overflow-x: auto; }
+  .citation-text-cell { max-width: 200px; }
+}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <h1>Cite<span>Guard</span></h1>
+  <p>Citation Verification for LLM-Generated Documents</p>
+</header>
+
+<main class="container">
+
+  <!-- Upload -->
+  <div id="uploadSection" class="upload-area">
+    <svg class="upload-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+      <polyline points="17 8 12 3 7 8"/>
+      <line x1="12" y1="3" x2="12" y2="15"/>
+    </svg>
+    <h2>Upload your document</h2>
+    <p>Drag &amp; drop or click to browse &mdash; PDF, DOCX, or TXT (max 10 MB)</p>
+    <input type="file" id="fileInput" accept=".pdf,.docx,.txt">
+    <div id="fileInfo" class="file-info"></div>
+  </div>
+  <button id="uploadBtn" class="upload-btn" disabled>Analyze Citations</button>
+
+  <!-- Progress -->
+  <div id="progressSection" class="progress-section">
+    <div class="spinner"></div>
+    <p>Analyzing citations<span class="progress-dots"></span></p>
+  </div>
+
+  <!-- Error -->
+  <div id="errorBanner" class="error-banner"></div>
+
+  <!-- Results -->
+  <div id="summarySection" class="summary-section">
+    <div id="riskBanner" class="risk-banner low">
+      <span class="dot"></span>
+      <span id="riskText">Low risk</span>
+    </div>
+
+    <div class="summary-cards">
+      <div class="summary-card total">
+        <div class="count" id="sumTotal">0</div>
+        <div class="label">Total</div>
+      </div>
+      <div class="summary-card verified">
+        <div class="count" id="sumVerified">0</div>
+        <div class="label">Verified</div>
+      </div>
+      <div class="summary-card suspect">
+        <div class="count" id="sumSuspect">0</div>
+        <div class="label">Suspect</div>
+      </div>
+      <div class="summary-card notfound">
+        <div class="count" id="sumNotFound">0</div>
+        <div class="label">Not Found</div>
+      </div>
+    </div>
+
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th style="width:36px"></th>
+          <th style="width:40px">#</th>
+          <th>Citation</th>
+          <th style="width:100px">Verdict</th>
+          <th style="width:130px">Confidence</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody"></tbody>
+    </table>
+
+    <button class="new-analysis-btn" id="newAnalysisBtn">New Analysis</button>
+  </div>
+
+</main>
+
+<script>
+(function () {
+  "use strict";
+
+  const MAX_SIZE = 10 * 1024 * 1024;
+  const POLL_INTERVAL = 2000;
+
+  const $ = (sel) => document.querySelector(sel);
+  const uploadSection = $("#uploadSection");
+  const fileInput = $("#fileInput");
+  const fileInfo = $("#fileInfo");
+  const uploadBtn = $("#uploadBtn");
+  const progressSection = $("#progressSection");
+  const errorBanner = $("#errorBanner");
+  const summarySection = $("#summarySection");
+  const resultsBody = $("#resultsBody");
+  const newAnalysisBtn = $("#newAnalysisBtn");
+
+  let selectedFile = null;
+
+  /* ── Drag & Drop ── */
+  uploadSection.addEventListener("dragover", function (e) {
+    e.preventDefault();
+    uploadSection.classList.add("dragover");
+  });
+  uploadSection.addEventListener("dragleave", function () {
+    uploadSection.classList.remove("dragover");
+  });
+  uploadSection.addEventListener("drop", function (e) {
+    e.preventDefault();
+    uploadSection.classList.remove("dragover");
+    if (e.dataTransfer.files.length) {
+      handleFile(e.dataTransfer.files[0]);
+    }
+  });
+
+  /* ── File Selection ── */
+  fileInput.addEventListener("change", function () {
+    if (fileInput.files.length) handleFile(fileInput.files[0]);
+  });
+
+  function handleFile(file) {
+    var allowed = [".pdf", ".docx", ".txt"];
+    var ext = file.name.substring(file.name.lastIndexOf(".")).toLowerCase();
+    if (allowed.indexOf(ext) === -1) {
+      fileInfo.textContent = "Unsupported file type. Please upload a PDF, DOCX, or TXT file.";
+      fileInfo.className = "file-info error";
+      uploadBtn.disabled = true;
+      selectedFile = null;
+      return;
+    }
+    if (file.size > MAX_SIZE) {
+      fileInfo.textContent = "File exceeds 10 MB limit (" + formatBytes(file.size) + ").";
+      fileInfo.className = "file-info error";
+      uploadBtn.disabled = true;
+      selectedFile = null;
+      return;
+    }
+    selectedFile = file;
+    fileInfo.textContent = file.name + " (" + formatBytes(file.size) + ")";
+    fileInfo.className = "file-info";
+    uploadBtn.disabled = false;
+  }
+
+  function formatBytes(bytes) {
+    if (bytes < 1024) return bytes + " B";
+    if (bytes < 1048576) return (bytes / 1024).toFixed(1) + " KB";
+    return (bytes / 1048576).toFixed(1) + " MB";
+  }
+
+  /* ── Upload ── */
+  uploadBtn.addEventListener("click", function (e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!selectedFile) return;
+    startUpload();
+  });
+
+  function showSection(section) {
+    uploadSection.style.display = "none";
+    uploadBtn.style.display = "none";
+    progressSection.style.display = "none";
+    summarySection.style.display = "none";
+    errorBanner.style.display = "none";
+    if (section === "upload") { uploadSection.style.display = "block"; uploadBtn.style.display = "inline-block"; }
+    if (section === "progress") progressSection.style.display = "block";
+    if (section === "results") summarySection.style.display = "block";
+  }
+
+  function showError(msg) {
+    errorBanner.textContent = msg;
+    errorBanner.style.display = "block";
+  }
+
+  async function startUpload() {
+    showSection("progress");
+    try {
+      var fd = new FormData();
+      fd.append("file", selectedFile);
+      var res = await fetch("/api/upload", { method: "POST", body: fd });
+      if (!res.ok) throw new Error("Upload failed (HTTP " + res.status + ")");
+      var data = await res.json();
+      if (!data.job_id) throw new Error("No job ID returned from server.");
+      pollResults(data.job_id);
+    } catch (err) {
+      showSection("upload");
+      showError(err.message || "Upload failed. Please try again.");
+    }
+  }
+
+  function pollResults(jobId) {
+    var timer = setInterval(async function () {
+      try {
+        var res = await fetch("/api/report/" + encodeURIComponent(jobId));
+        if (!res.ok) throw new Error("Server error (HTTP " + res.status + ")");
+        var data = await res.json();
+        if (data.status === "complete") {
+          clearInterval(timer);
+          renderResults(data);
+        } else if (data.status === "error") {
+          clearInterval(timer);
+          showSection("upload");
+          showError(data.error || "Analysis failed. Please try again.");
+        }
+        // else keep polling
+      } catch (err) {
+        clearInterval(timer);
+        showSection("upload");
+        showError(err.message || "Failed to retrieve results.");
+      }
+    }, POLL_INTERVAL);
+  }
+
+  /* ── Render Results ── */
+  function renderResults(data) {
+    var summary = data.summary || {};
+    var citations = data.citations || [];
+
+    // Summary cards
+    $("#sumTotal").textContent = summary.total || citations.length;
+    $("#sumVerified").textContent = summary.verified || 0;
+    $("#sumSuspect").textContent = summary.suspect || 0;
+    $("#sumNotFound").textContent = summary.not_found || 0;
+
+    // Risk banner
+    var risk = (summary.risk_level || "low").toLowerCase();
+    var riskBanner = $("#riskBanner");
+    riskBanner.className = "risk-banner " + risk;
+    var riskLabels = { low: "Low risk", medium: "Medium risk", high: "High risk" };
+    $("#riskText").textContent = (riskLabels[risk] || "Unknown risk") +
+      " \u2014 " + (summary.verified || 0) + " of " + (summary.total || citations.length) + " citations verified";
+
+    // Table rows
+    resultsBody.innerHTML = "";
+    citations.forEach(function (c) {
+      var tr = document.createElement("tr");
+      tr.className = "citation-row";
+      tr.setAttribute("data-index", c.index);
+
+      var verdictClass = c.verdict === "verified" ? "verified" :
+                         c.verdict === "suspect" ? "suspect" : "not_found";
+      var verdictLabel = c.verdict === "verified" ? "Verified" :
+                         c.verdict === "suspect" ? "Suspect" : "Not Found";
+
+      var confColor = c.confidence >= 70 ? "var(--green)" :
+                      c.confidence >= 40 ? "var(--orange)" : "var(--red)";
+
+      tr.innerHTML =
+        '<td><svg class="expand-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg></td>' +
+        '<td>' + escHtml(String(c.index)) + '</td>' +
+        '<td class="citation-text-cell" title="' + escAttr(c.raw_text) + '">' + escHtml(c.raw_text) + '</td>' +
+        '<td><span class="badge ' + verdictClass + '">' + verdictLabel + '</span></td>' +
+        '<td><div class="confidence-wrap">' +
+          '<div class="confidence-bar"><div class="confidence-fill" style="width:' + c.confidence + '%;background:' + confColor + '"></div></div>' +
+          '<span class="confidence-num">' + c.confidence + '%</span>' +
+        '</div></td>';
+
+      resultsBody.appendChild(tr);
+
+      // Detail row
+      var detailTr = document.createElement("tr");
+      detailTr.className = "detail-row";
+      var detailTd = document.createElement("td");
+      detailTd.colSpan = 5;
+
+      var md = c.match_details || {};
+      var detailParts = [];
+      detailParts.push('<div class="detail-label">Full Citation</div>');
+      detailParts.push('<div class="detail-value">' + escHtml(c.raw_text) + '</div>');
+
+      if (c.author || c.year) {
+        detailParts.push('<div class="detail-label">Parsed Info</div>');
+        var parsed = [];
+        if (c.author) parsed.push("Author: " + c.author);
+        if (c.title) parsed.push("Title: " + c.title);
+        if (c.year) parsed.push("Year: " + c.year);
+        detailParts.push('<div class="detail-value">' + escHtml(parsed.join(" | ")) + '</div>');
+      }
+
+      if (md.source) {
+        detailParts.push('<div class="detail-label">Match Source</div>');
+        detailParts.push('<div class="detail-value">' + escHtml(md.source.charAt(0).toUpperCase() + md.source.slice(1)) + '</div>');
+      }
+      if (md.matched_title) {
+        detailParts.push('<div class="detail-label">Matched Title</div>');
+        detailParts.push('<div class="detail-value">' + escHtml(md.matched_title) + '</div>');
+      }
+      if (md.matched_authors && md.matched_authors.length) {
+        detailParts.push('<div class="detail-label">Matched Authors</div>');
+        detailParts.push('<div class="detail-value">' + escHtml(md.matched_authors.join(", ")) + '</div>');
+      }
+      if (c.doi || md.matched_doi) {
+        detailParts.push('<div class="detail-label">DOI</div>');
+        var doi = c.doi || md.matched_doi;
+        detailParts.push('<div class="detail-value"><code>' + escHtml(doi) + '</code></div>');
+      }
+      if (c.isbn) {
+        detailParts.push('<div class="detail-label">ISBN</div>');
+        detailParts.push('<div class="detail-value"><code>' + escHtml(c.isbn) + '</code></div>');
+      }
+
+      detailTd.innerHTML = '<div class="detail-content">' + detailParts.join("") + '</div>';
+      detailTr.appendChild(detailTd);
+      resultsBody.appendChild(detailTr);
+
+      // Toggle
+      tr.addEventListener("click", function () {
+        var isOpen = detailTr.classList.contains("visible");
+        detailTr.classList.toggle("visible", !isOpen);
+        tr.classList.toggle("expanded", !isOpen);
+      });
+    });
+
+    showSection("results");
+  }
+
+  function escHtml(s) {
+    var d = document.createElement("div");
+    d.appendChild(document.createTextNode(s || ""));
+    return d.innerHTML;
+  }
+
+  function escAttr(s) {
+    return escHtml(s).replace(/"/g, "&quot;");
+  }
+
+  /* ── New Analysis ── */
+  newAnalysisBtn.addEventListener("click", function () {
+    selectedFile = null;
+    fileInput.value = "";
+    fileInfo.textContent = "";
+    uploadBtn.disabled = true;
+    showSection("upload");
+  });
+
+})();
+</script>
+</body>
+</html>

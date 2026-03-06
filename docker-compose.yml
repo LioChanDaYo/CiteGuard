@@ -1,0 +1,8 @@
+services:
+  citeguard:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      - CROSSREF_MAIL=${CROSSREF_MAIL:-anonymous@example.com}
+    restart: unless-stopped
