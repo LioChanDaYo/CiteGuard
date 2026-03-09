@@ -180,6 +180,10 @@ cython_debug/
 #  you could uncomment the following to ignore the enitre vscode folder
 # .vscode/
 
+# Test papers (PDFs downloaded for testing)
+test_papers/*.pdf
+test_papers/test_results.json
+
 # Ruff stuff:
 .ruff_cache/
 

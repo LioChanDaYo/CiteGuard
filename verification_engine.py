@@ -74,11 +74,49 @@ class VerificationResult:
 _NOT_FOUND = MatchDetails(source="none")
 
 
+_LIGATURE_MAP = str.maketrans({
+    '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl',
+    '\ufb03': 'ffi', '\ufb04': 'ffl',
+})
+
+
+def _normalize_text(text: str) -> str:
+    """Normalize text for comparison: ligatures, punctuation, whitespace."""
+    text = text.translate(_LIGATURE_MAP)
+    text = re.sub(r'[^\w\s]', '', text.lower().strip())
+    return re.sub(r'\s+', ' ', text)
+
+
 def _title_similarity(a: str, b: str) -> float:
     """Normalized similarity between two title strings."""
-    a_clean = re.sub(r'[^\w\s]', '', a.lower().strip())
-    b_clean = re.sub(r'[^\w\s]', '', b.lower().strip())
+    a_clean = _normalize_text(a)
+    b_clean = _normalize_text(b)
     return SequenceMatcher(None, a_clean, b_clean).ratio()
+
+
+def _author_similarity(extracted: str, api_authors: List[str]) -> float:
+    """Check if extracted author string overlaps with API author list.
+
+    Returns a score 0.0–1.0 based on how many API author last names appear
+    in the extracted author string.
+    """
+    if not extracted or not api_authors:
+        return 0.0
+    extracted_lower = extracted.lower()
+    # Also check against raw_text if provided (stored in extracted field)
+    matched = 0
+    for author in api_authors:
+        # Extract last name — handle both "Last, First" and "First Last" formats
+        parts = author.split(',')
+        last_name = parts[0].strip().lower()
+        # Also try last word (for "First Last" format from API)
+        words = author.strip().split()
+        last_word = words[-1].lower() if words else ""
+        # Match if either form of last name appears
+        if (len(last_name) >= 3 and last_name in extracted_lower) or \
+           (len(last_word) >= 3 and last_word in extracted_lower):
+            matched += 1
+    return matched / len(api_authors)
 
 
 def _verdict_from_confidence(confidence: int) -> str:
@@ -222,44 +260,132 @@ def _verify_by_arxiv(citation: Citation) -> Optional[VerificationResult]:
     )
 
 
-def _verify_by_search(citation: Citation) -> VerificationResult:
-    """Verify a citation by searching CrossRef with title + author."""
+def _build_search_query(citation: Citation) -> str:
+    """Build a clean search query from citation fields.
+
+    Prioritizes title, adds a short author snippet. Avoids sending
+    journal/venue info or excessively long queries to CrossRef.
+    """
     query_parts: List[str] = []
+
     if citation.title:
-        query_parts.append(citation.title)
+        # Use title as primary query (truncate if too long)
+        title = citation.title[:150]
+        query_parts.append(title)
+
     if citation.author:
-        query_parts.append(citation.author)
+        # Only use first author's last name to avoid noise
+        author = citation.author
+        # Take just the first author (before first comma that separates authors, or "and")
+        first_author = re.split(r',\s*(?=[A-Z])|(?:\s+and\s+)', author)[0].strip()
+        # Further clean: just last name (first word for "Last, F." or last word for "First Last")
+        words = first_author.split()
+        if words:
+            # If it looks like "Last, F." take the first word
+            last_name = words[0].rstrip(',').rstrip('.')
+            if len(last_name) >= 2:
+                query_parts.append(last_name)
 
     if not query_parts:
-        return VerificationResult.from_citation(citation, "not_found", 0, _NOT_FOUND)
+        # No title or author — use cleaned raw text as query
+        # This helps with physics compact format: "Author, Journal Vol, Page (Year)"
+        raw = citation.raw_text
+        # Clean: remove URLs, DOIs, page numbers, excessive punctuation
+        raw_clean = re.sub(r'https?://\S+', '', raw)
+        raw_clean = re.sub(r'10\.\d{4,9}/\S+', '', raw_clean)
+        raw_clean = re.sub(r'\s+', ' ', raw_clean).strip()
+        if raw_clean:
+            query_parts.append(raw_clean[:150])
 
     query = " ".join(query_parts)
+    # Truncate to avoid overly long API queries
+    return query[:200]
+
+
+def _verify_by_search(citation: Citation) -> VerificationResult:
+    """Verify a citation by searching CrossRef with title + author."""
+    query = _build_search_query(citation)
+
+    if not query or len(query.strip()) < 8:
+        return VerificationResult.from_citation(citation, "not_found", 0, _NOT_FOUND)
 
     try:
         items = crossref_search(query, rows=5, timeout=15, retries=2)
     except (HTTPRequestError, SystemExit):
         return VerificationResult.from_citation(citation, "not_found", 0, _NOT_FOUND)
 
+    best_score = 0.0
     best_sim = 0.0
     best_item: Optional[Dict[str, Any]] = None
 
     for item in items:
         item_title = _extract_title_from_crossref(item)
-        if citation.title and item_title:
-            sim = _title_similarity(citation.title, item_title)
-            if sim > best_sim:
-                best_sim = sim
-                best_item = item
+        if not item_title:
+            continue
 
-    if best_item is None or best_sim < 0.3:
+        # Title similarity is the primary signal
+        if citation.title:
+            sim = _title_similarity(citation.title, item_title)
+        else:
+            # No extracted title — check if API result title appears in raw text
+            raw_clean = _normalize_text(citation.raw_text)
+            api_title_clean = _normalize_text(item_title)
+            if api_title_clean and api_title_clean in raw_clean:
+                sim = 0.85  # Strong match: API title is substring of raw text
+            else:
+                sim = _title_similarity(citation.raw_text[:200], item_title)
+
+        # Author similarity as secondary signal
+        item_authors = _extract_authors_from_crossref(item)
+        author_sim = _author_similarity(citation.author or "", item_authors)
+
+        # Combined score: title is primary, author is a boost/penalty
+        score = sim * 0.8 + author_sim * 0.2
+
+        if score > best_score:
+            best_score = score
+            best_sim = sim
+            best_item = item
+
+    # Threshold: 0.35 balances false positives vs missed real matches
+    # (0.3 was too low → false positives, 0.5 was too high → missed real matches)
+    if best_item is None or best_sim < 0.35:
         return VerificationResult.from_citation(citation, "not_found", 0, _NOT_FOUND)
 
     matched_title = _extract_title_from_crossref(best_item)
     matched_authors = _extract_authors_from_crossref(best_item)
     matched_doi = best_item.get("DOI")
 
-    confidence = min(90, int(best_sim * 100)) if best_sim >= 0.9 else int(best_sim * 100)
-    verdict = "verified" if best_sim >= 0.7 else "suspect"
+    # Author matching adjusts confidence (boosts only, no penalties for mismatch
+    # since extracted author field is often incomplete/partial)
+    # Check against both extracted author AND raw text for best match
+    author_sim = _author_similarity(citation.author or "", matched_authors)
+    raw_author_sim = _author_similarity(citation.raw_text[:300], matched_authors)
+    author_sim = max(author_sim, raw_author_sim)
+
+    if best_sim >= 0.9:
+        confidence = 90
+    elif best_sim >= 0.7:
+        confidence = int(best_sim * 100)
+        # Author match boosts confidence into verified range
+        if author_sim >= 0.2:
+            confidence = min(90, confidence + 8)
+    elif best_sim >= 0.5:
+        confidence = int(best_sim * 100)
+        # In the 0.5-0.7 range, author matching helps a lot
+        if author_sim >= 0.5:
+            confidence = min(85, confidence + 20)
+        elif author_sim >= 0.2:
+            confidence = min(80, confidence + 12)
+    else:
+        confidence = int(best_sim * 100)
+        # Below 0.5 title sim — only trust if strong author match
+        if author_sim >= 0.5:
+            confidence = min(75, confidence + 25)
+        elif author_sim >= 0.2:
+            confidence = min(65, confidence + 10)
+
+    verdict = "verified" if confidence >= 70 else "suspect"
 
     return VerificationResult.from_citation(
         citation,
@@ -274,14 +400,39 @@ def _verify_by_search(citation: Citation) -> VerificationResult:
     )
 
 
+def _extract_arxiv_from_raw(raw_text: str) -> Optional[str]:
+    """Try to find an arXiv ID in the raw citation text."""
+    # Match arXiv URLs or explicit IDs
+    m = re.search(r'arxiv[.:/\s]+(?:abs/|pdf/)?(\d{4}\.\d{4,5}(?:v\d+)?|[a-z-]+/\d{7}(?:v\d+)?)', raw_text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+    return None
+
+
 def _verify_one(cit: Citation) -> VerificationResult:
     """Verify a single citation through the DOI → arXiv → ISBN → search cascade."""
+    # Skip tiny/garbage citations
+    if len(cit.raw_text.strip()) < 15:
+        return VerificationResult.from_citation(cit, "not_found", 0, _NOT_FOUND)
+
     result = _verify_by_doi(cit)
     if result:
         return result
     result = _verify_by_arxiv(cit)
     if result:
         return result
+    # Try extracting arXiv ID from raw text even if not in structured field
+    if not cit.arxiv_id:
+        raw_arxiv = _extract_arxiv_from_raw(cit.raw_text)
+        if raw_arxiv:
+            cit_with_arxiv = Citation(
+                index=cit.index, raw_text=cit.raw_text,
+                author=cit.author, title=cit.title, year=cit.year,
+                doi=cit.doi, isbn=cit.isbn, arxiv_id=raw_arxiv,
+            )
+            result = _verify_by_arxiv(cit_with_arxiv)
+            if result:
+                return result
     result = _verify_by_isbn(cit)
     if result:
         return result

@@ -131,8 +131,6 @@ def crossref_search(
         retries=retries,
     )
     items = resp.json().get("message", {}).get("items", [])
-    if not items:
-        raise SystemExit("[Info] No results returned – check your query.")
     return items
 
 
@@ -231,7 +229,10 @@ def main(argv: List[str] | None = None) -> None:
     args = parser.parse_args(argv)
 
     if args.command == "search":
-        pretty_print(crossref_search(args.query, args.rows, args.timeout, args.retries))
+        results = crossref_search(args.query, args.rows, args.timeout, args.retries)
+        if not results:
+            raise SystemExit("[Info] No results returned – check your query.")
+        pretty_print(results)
     elif args.command == "doi":
         pretty_print(crossref_get(args.doi, args.timeout, args.retries))
     elif args.command == "isbn":
