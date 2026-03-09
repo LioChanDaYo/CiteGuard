@@ -76,7 +76,9 @@ def process_document(job_id: str, filename: str, data: bytes) -> None:
     try:
         text = extract_text(filename, data)
         citations = extract_citations(text)
-        results = verify_citations(citations)
+        # Build ref_section from extracted citation raw texts for style detection
+        ref_section = "\n".join(c.raw_text for c in citations)
+        results = verify_citations(citations, ref_section=ref_section)
         summary = compute_summary(results)
 
         jobs[job_id].update({

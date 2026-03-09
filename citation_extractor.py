@@ -24,6 +24,9 @@ class Citation:
     doi: Optional[str] = None
     isbn: Optional[str] = None
     arxiv_id: Optional[str] = None
+    journal: Optional[str] = None
+    volume: Optional[str] = None
+    pages: Optional[str] = None
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +286,134 @@ def _extract_year(text: str) -> Optional[str]:
     return None
 
 
+# ---------------------------------------------------------------------------
+# Physics journal abbreviations for detection
+# ---------------------------------------------------------------------------
+
+_PHYSICS_JOURNALS = {
+    'phys. rev. lett.': 'Phys.Rev.Lett.',
+    'phys. rev. d': 'Phys.Rev.D',
+    'phys. rev.': 'Phys.Rev.',
+    'j. high energy phys.': 'JHEP',
+    'jhep': 'JHEP',
+    'nucl. phys.': 'Nucl.Phys.',
+    'eur. phys. j.': 'Eur.Phys.J.',
+    'class. quantum grav.': 'Class.Quant.Grav.',
+    'j. cosmol. astropart. phys.': 'JCAP',
+    'jcap': 'JCAP',
+    'astrophys. j.': 'Astrophys.J.',
+    'mon. not. r. astron. soc.': 'Mon.Not.Roy.Astron.Soc.',
+    'ann. phys.': 'Annals Phys.',
+    'rev. mod. phys.': 'Rev.Mod.Phys.',
+    'living rev. relativ.': 'Living Rev.Rel.',
+    'gen. relativ. gravit.': 'Gen.Rel.Grav.',
+    'new j. phys.': 'New J.Phys.',
+    'prog. theor. phys.': 'Prog.Theor.Phys.',
+    'sov. phys. jetp': 'Sov.Phys.JETP',
+}
+
+# Sort by length descending so longer matches take priority (e.g. "phys. rev. lett." before "phys. rev.")
+_PHYSICS_JOURNALS_SORTED = sorted(_PHYSICS_JOURNALS.keys(), key=len, reverse=True)
+
+# Medical journal volume;issue:pages pattern: "2020;382(8):727-733"
+_MEDICAL_VOL_RE = re.compile(r'(\d{4})\s*;\s*(\d+)\s*(?:\((\d+)\))?\s*:\s*([\d\-]+)')
+
+# Physics compact: "Journal Name Vol, Pages (Year)" or "Journal Name Vol (Year) Pages"
+_PHYSICS_VOL_PAGES_RE = re.compile(
+    r'(\d+)\s*[,]\s*(\d[\d\-]+)'
+)
+
+
+def _extract_journal(text: str) -> Optional[str]:
+    """Extract journal name from citation text.
+
+    Checks against known physics journal abbreviations first, then falls back
+    to medical journal patterns.
+    """
+    lower = text.lower()
+    for abbrev in _PHYSICS_JOURNALS_SORTED:
+        if abbrev in lower:
+            return _PHYSICS_JOURNALS[abbrev]
+
+    # Medical journal pattern: "JournalName. Year;Vol(Issue):Pages"
+    # Try to extract journal name before the year;vol pattern
+    m = _MEDICAL_VOL_RE.search(text)
+    if m:
+        # Find the journal name: text before the year;vol pattern
+        idx = text.find(m.group(0))
+        if idx > 0:
+            prefix = text[:idx].strip().rstrip('.')
+            # Walk backwards past the year to find journal name
+            # Look for "JournalName. Year" pattern
+            jm = re.search(r'([A-Z][A-Za-z\s]+(?:J|Med|Lancet|BMJ|JAMA)[A-Za-z\s]*)\.\s*$', prefix)
+            if jm:
+                return jm.group(1).strip()
+
+    return None
+
+
+def _extract_volume(text: str) -> Optional[str]:
+    """Extract volume number from citation text.
+
+    Handles physics compact format (bare number after journal) and
+    medical format (number after semicolon).
+    """
+    # Medical: "Year;Vol(Issue):Pages"
+    m = _MEDICAL_VOL_RE.search(text)
+    if m:
+        return m.group(2)
+
+    # IEEE/standard: "vol. 116" or "Vol. 116"
+    m = re.search(r'\bvol\.?\s*(\d+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1)
+
+    # Physics compact: find journal, then the number after it is the volume
+    lower = text.lower()
+    for abbrev in _PHYSICS_JOURNALS_SORTED:
+        idx = lower.find(abbrev)
+        if idx >= 0:
+            after = text[idx + len(abbrev):].strip().lstrip('.,')
+            vm = re.match(r'\s*(\d+)', after)
+            if vm:
+                return vm.group(1)
+
+    return None
+
+
+def _extract_pages(text: str) -> Optional[str]:
+    """Extract page numbers from citation text.
+
+    Handles physics compact (bare number after volume comma),
+    medical format (after colon), and standard pp. format.
+    """
+    # Medical: "Year;Vol(Issue):Pages"
+    m = _MEDICAL_VOL_RE.search(text)
+    if m:
+        return m.group(4)
+
+    # Standard: "pp. 123-456" or "pages 123--456"
+    m = re.search(r'\bpp\.?\s*([\d]+[\-\u2013]+[\d]+|\d+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).replace('\u2013', '-')
+    m = re.search(r'\bpages?\s*([\d]+[\-\u2013]+[\d]+|\d+)', text, re.IGNORECASE)
+    if m:
+        return m.group(1).replace('\u2013', '-')
+
+    # Physics compact: journal Vol, Pages (Year)
+    lower = text.lower()
+    for abbrev in _PHYSICS_JOURNALS_SORTED:
+        idx = lower.find(abbrev)
+        if idx >= 0:
+            after = text[idx + len(abbrev):].strip().lstrip('.,')
+            # Match: Vol, Pages or Vol, Pages (Year)
+            pm = re.match(r'\s*\d+\s*[,]\s*([\d\-]+)', after)
+            if pm:
+                return pm.group(1)
+
+    return None
+
+
 _LIGATURE_MAP = str.maketrans({
     '\ufb00': 'ff', '\ufb01': 'fi', '\ufb02': 'fl',
     '\ufb03': 'ffi', '\ufb04': 'ffl',
@@ -470,6 +601,94 @@ def _validate_title(title: Optional[str]) -> Optional[str]:
 
 
 # ---------------------------------------------------------------------------
+# Citation style detection
+# ---------------------------------------------------------------------------
+
+def detect_citation_style(ref_section: str) -> str:
+    """Detect citation style from reference section.
+
+    Analyzes ALL references in the section (not individual ones) and
+    takes the majority signal.
+
+    Returns one of: 'ieee', 'apa', 'vancouver', 'physics', 'acl', 'chicago', 'unknown'
+    """
+    # Split into individual lines/references for scoring
+    lines = [line.strip() for line in ref_section.split('\n') if line.strip() and len(line.strip()) > 20]
+
+    if not lines:
+        return 'unknown'
+
+    scores = {
+        'ieee': 0,
+        'apa': 0,
+        'vancouver': 0,
+        'physics': 0,
+        'acl': 0,
+        'chicago': 0,
+    }
+
+    for line in lines:
+        lower = line.lower()
+
+        # IEEE: [N] numbering + vol./no./pp. abbreviations
+        if re.match(r'^\s*\[\d+\]', line):
+            scores['ieee'] += 1
+        if re.search(r'\bvol\.\s*\d+', lower) or re.search(r'\bno\.\s*\d+', lower):
+            scores['ieee'] += 1
+        if re.search(r'\bpp\.\s*\d+', lower):
+            scores['ieee'] += 0.5
+
+        # APA: (Year). pattern after author block
+        if re.search(r'\(\d{4}[a-z]?\)\.\s', line):
+            scores['apa'] += 2
+
+        # Vancouver: Author initials without periods (Smith AB) +
+        # semicolons after year + colon in volume:pages
+        if re.match(r'^[A-Z][a-z]+\s+[A-Z]{1,3}[,;]', line):
+            scores['vancouver'] += 1.5
+        if re.search(r'\d{4}\s*;\s*\d+', line):
+            scores['vancouver'] += 1
+        if re.search(r'\d+\s*:\s*\d+[\-\u2013]\d+', line):
+            scores['vancouver'] += 0.5
+
+        # Physics compact: known physics journal abbreviations + bare volume numbers
+        for abbrev in _PHYSICS_JOURNALS_SORTED:
+            if abbrev in lower:
+                scores['physics'] += 2
+                break
+        # Also check for physics-style "Vol, Pages (Year)" pattern
+        if re.search(r'[A-Za-z.]\s+\d+\s*,\s*\d+\s*\(\d{4}\)', line):
+            scores['physics'] += 1
+
+        # ACL: "In Proceedings of" + "pages X--Y" (double-dash)
+        if 'in proceedings of' in lower:
+            scores['acl'] += 1.5
+        if re.search(r'pages?\s+\d+\s*--\s*\d+', lower):
+            scores['acl'] += 1.5
+
+        # Chicago: Full first names + publisher city pattern
+        # Check for full first names (not just initials)
+        if re.match(r'^[A-Z][a-z]+,\s+[A-Z][a-z]{2,}', line):
+            scores['chicago'] += 1
+        # Publisher city: "City: Publisher" pattern
+        if re.search(r'[A-Z][a-z]+:\s+[A-Z][a-z]+\s+(?:University|Press|Publishing|Books)', line):
+            scores['chicago'] += 1.5
+        # No abbreviated field labels (vol., no., pp.)
+        if not re.search(r'\b(?:vol\.|no\.|pp\.)', lower):
+            scores['chicago'] += 0.2
+
+    # Return the style with the highest score
+    if not any(scores.values()):
+        return 'unknown'
+
+    best_style = max(scores, key=lambda k: scores[k])
+    if scores[best_style] < 1:
+        return 'unknown'
+
+    return best_style
+
+
+# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -545,6 +764,9 @@ def extract_citations(text: str) -> List[Citation]:
             author=_extract_author(raw),
             title=_validate_title(_extract_title(raw)),
             arxiv_id=_extract_arxiv_id(raw),
+            journal=_extract_journal(raw),
+            volume=_extract_volume(raw),
+            pages=_extract_pages(raw),
         )
         citations.append(cit)
 
