@@ -2,7 +2,7 @@
 
 Provides lookup and search functions for:
   Semantic Scholar, OpenAlex, PubMed (ESearch/ECitMatch/EFetch),
-  INSPIRE-HEP, NASA ADS, DBLP, zbMATH, Unpaywall, Retraction Watch.
+  INSPIRE-HEP, NASA ADS, DBLP, zbMATH, HAL, Unpaywall, Retraction Watch.
 
 All functions return Optional[dict], Optional[List[dict]], or Optional[str]
 and never raise on network/API errors — they return None or an empty list.
@@ -437,7 +437,65 @@ def unpaywall_lookup(doi: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 11. Retraction Watch (via CrossRef update-to field)
+# 11. HAL (Hyper Articles en Ligne — French national open archive)
+# ---------------------------------------------------------------------------
+
+HAL_BASE = "https://api.archives-ouvertes.fr/search/"
+HAL_FIELDS = "halId_s,title_s,authFullName_s,doiId_s,journalTitle_s,publicationDateY_i"
+
+
+def hal_search(
+    title: str,
+    author: str = "",
+    limit: int = 5,
+) -> Optional[List[Dict[str, Any]]]:
+    """Search HAL by title (and optionally author). Returns normalized results.
+
+    HAL hosts 4.5M+ documents, strong coverage of French research across all
+    disciplines. Free, no authentication required. Solr-based API.
+    """
+    query_parts = [title]
+    if author:
+        first_author = author.split(",")[0].strip()
+        if first_author:
+            query_parts.append(first_author)
+
+    query = " ".join(query_parts)
+    resp = _request_with_retries(
+        url=HAL_BASE,
+        params={
+            "q": query,
+            "fl": HAL_FIELDS,
+            "rows": str(limit),
+            "wt": "json",
+        },
+        headers={"User-Agent": USER_AGENT},
+    )
+    if resp is None:
+        return None
+    try:
+        data = resp.json()
+        docs = data.get("response", {}).get("docs", [])
+        results = []
+        for doc in docs:
+            titles = doc.get("title_s", [])
+            title_str = titles[0] if titles else ""
+            authors = doc.get("authFullName_s", [])
+            doi = doc.get("doiId_s")
+            results.append({
+                "title": title_str,
+                "authors": authors,
+                "doi": doi,
+                "hal_id": doc.get("halId_s"),
+                "journal": doc.get("journalTitle_s"),
+                "year": doc.get("publicationDateY_i"),
+            })
+        return results
+    except (ValueError, KeyError):
+        return None
+
+
+# 12. Retraction Watch (via CrossRef update-to field)
 # ---------------------------------------------------------------------------
 
 def check_retraction(doi: str) -> Optional[bool]:

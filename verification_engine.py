@@ -36,6 +36,7 @@ from scholarly_apis import (
     ads_search,
     dblp_search,
     zbmath_search,
+    hal_search,
     unpaywall_lookup,
     check_retraction,
 )
@@ -117,8 +118,10 @@ def _normalize_text(text: str) -> str:
     text = "".join(c for c in text if not unicodedata.combining(c))
     # Lowercase
     text = text.lower().strip()
-    # Remove leading articles
-    text = re.sub(r'^(the|a|an)\s+', '', text)
+    # Remove leading articles (English + French)
+    # Note: 'l' and 'd' match French contractions (l'amour → "l amour", d'autres → "d autres")
+    # because apostrophes become spaces after accent/combining-mark removal above.
+    text = re.sub(r'^(the|a|an|le|la|les|l|un|une|des|du|de|d)\s+', '', text)
     # Strip punctuation
     text = re.sub(r'[^\w\s]', ' ', text)
     # Collapse whitespace
@@ -440,6 +443,16 @@ def _verify_by_zbmath(citation: Citation) -> Optional[VerificationResult]:
     return _pick_best_match(citation, results, "zbmath")
 
 
+def _verify_by_hal(citation: Citation) -> Optional[VerificationResult]:
+    """Verify via HAL (French national open archive, 4.5M+ documents)."""
+    query = citation.title or _build_search_query(citation)
+    if not query or len(query.strip()) < 8:
+        return None
+    author = citation.author or ""
+    results = hal_search(query, author=author, limit=5)
+    return _pick_best_match(citation, results, "hal")
+
+
 def _verify_by_semantic_scholar(citation: Citation) -> Optional[VerificationResult]:
     """Verify via Semantic Scholar (cross-discipline)."""
     # Try DOI first
@@ -735,14 +748,14 @@ def _verify_one(cit: Citation, discipline: str = "unknown") -> VerificationResul
     elif discipline == "biomedical":
         cascade = [_verify_by_pubmed, _verify_by_crossref_search, _verify_by_semantic_scholar]
     elif discipline == "math":
-        cascade = [_verify_by_zbmath, _verify_by_crossref_search, _verify_by_semantic_scholar]
+        cascade = [_verify_by_zbmath, _verify_by_hal, _verify_by_crossref_search, _verify_by_semantic_scholar]
     elif discipline == "cs":
         cascade = [_verify_by_dblp, _verify_by_crossref_search, _verify_by_semantic_scholar]
     elif discipline in ("social_science", "humanities"):
-        cascade = [_verify_by_crossref_search, _verify_by_semantic_scholar, _verify_by_openalex]
+        cascade = [_verify_by_hal, _verify_by_crossref_search, _verify_by_semantic_scholar, _verify_by_openalex]
     else:
-        # Unknown: broad coverage
-        cascade = [_verify_by_crossref_search, _verify_by_semantic_scholar, _verify_by_openalex]
+        # Unknown: broad coverage (includes HAL for French paper coverage)
+        cascade = [_verify_by_crossref_search, _verify_by_hal, _verify_by_semantic_scholar, _verify_by_openalex]
 
     # First pass: try each source, collect best result
     best_result: Optional[VerificationResult] = None
