@@ -753,9 +753,18 @@ def extract_citations(text: str) -> List[Citation]:
     # Filter out tiny/empty citations
     raw_refs = [r for r in raw_refs if len(r.strip()) >= 15]
 
+    # Try GROBID for structured extraction (enhances compact citation formats)
+    grobid_results: dict = {}
+    try:
+        from grobid_client import parse_citations_batch
+        grobid_results = parse_citations_batch(raw_refs, start_index=1)
+    except Exception:
+        pass  # GROBID unavailable — fall back to regex only
+
     citations: List[Citation] = []
     for i, raw in enumerate(raw_refs, start=1):
-        cit = Citation(
+        # Regex extraction (always runs)
+        regex_cit = Citation(
             index=i,
             raw_text=raw,
             doi=_extract_doi(raw),
@@ -768,6 +777,26 @@ def extract_citations(text: str) -> List[Citation]:
             volume=_extract_volume(raw),
             pages=_extract_pages(raw),
         )
+
+        # Merge GROBID fields (GROBID wins when it has data, regex fills gaps)
+        grobid_cit = grobid_results.get(i)
+        if grobid_cit is not None:
+            cit = Citation(
+                index=i,
+                raw_text=raw,
+                author=grobid_cit.author or regex_cit.author,
+                title=grobid_cit.title or regex_cit.title,
+                year=grobid_cit.year or regex_cit.year,
+                doi=regex_cit.doi or grobid_cit.doi,  # regex DOI more reliable (direct pattern match)
+                isbn=regex_cit.isbn,  # GROBID doesn't extract ISBN
+                arxiv_id=regex_cit.arxiv_id,  # regex arXiv more reliable (direct pattern match)
+                journal=grobid_cit.journal or regex_cit.journal,
+                volume=grobid_cit.volume or regex_cit.volume,
+                pages=grobid_cit.pages or regex_cit.pages,
+            )
+        else:
+            cit = regex_cit
+
         citations.append(cit)
 
     return citations

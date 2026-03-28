@@ -2,7 +2,8 @@ services:
   citeguard:
     build: .
     ports:
-      - "8000:8000"
+      - "7860:7860"
     environment:
       - CROSSREF_MAIL=${CROSSREF_MAIL:-anonymous@example.com}
+      - GROBID_URL=${GROBID_URL:-https://kermitt2-grobid.hf.space}
     restart: unless-stopped
