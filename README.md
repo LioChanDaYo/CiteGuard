@@ -68,7 +68,7 @@ docker compose up --build
 
 | Variable | Description | Default |
 |----------|-------------|---------|
-| `CROSSREF_MAIL` | Email for CrossRef/OpenAlex polite pool | `anonymous@example.com` |
+| `CROSSREF_MAIL` | Email for CrossRef/OpenAlex polite pool | `citeguard.app@proton.me` |
 | `GROBID_URL` | GROBID API base URL | `https://kermitt2-grobid.hf.space` |
 | `ADS_API_KEY` | NASA ADS API key (optional) | — |
 | `NCBI_API_KEY` | PubMed API key for higher rate limits (optional) | — |

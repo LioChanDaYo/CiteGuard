@@ -29,7 +29,7 @@ import requests
 # ---------------------------------------------------------------------------
 APP_NAME = "CiteGuard"
 APP_VERSION = "0.5"
-DEFAULT_EMAIL = "anonymous@example.com"
+DEFAULT_EMAIL = "citeguard.app@proton.me"
 EMAIL = os.getenv("CROSSREF_MAIL", DEFAULT_EMAIL)
 USER_AGENT = f"{APP_NAME}/{APP_VERSION} (mailto:{EMAIL})"
 
@@ -437,7 +437,56 @@ def unpaywall_lookup(doi: str) -> Optional[dict]:
 
 
 # ---------------------------------------------------------------------------
-# 11. HAL (Hyper Articles en Ligne — French national open archive)
+# 11. Open Library title+author search (book verification fallback)
+# ---------------------------------------------------------------------------
+
+OPENLIBRARY_SEARCH_URL = "https://openlibrary.org/search.json"
+
+
+def openlibrary_search(
+    title: str,
+    author: str = "",
+    limit: int = 3,
+) -> Optional[List[Dict[str, Any]]]:
+    """Search Open Library by title and author. Returns normalized results.
+
+    Complements ISBN-based OpenLibrary lookup for books without ISBNs.
+    Free, no authentication required.
+    """
+    params: Dict[str, str] = {"title": title, "limit": str(limit)}
+    if author:
+        first_author = author.split(",")[0].split(";")[0].strip()
+        if first_author:
+            params["author"] = first_author
+
+    resp = _request_with_retries(
+        url=OPENLIBRARY_SEARCH_URL,
+        params=params,
+        headers={"User-Agent": USER_AGENT},
+    )
+    if resp is None:
+        return None
+    try:
+        data = resp.json()
+        docs = data.get("docs", [])
+        results = []
+        for doc in docs:
+            authors = doc.get("author_name", [])
+            isbns = doc.get("isbn", [])
+            results.append({
+                "title": doc.get("title", ""),
+                "authors": authors,
+                "doi": None,
+                "isbn": isbns[0] if isbns else None,
+                "year": doc.get("first_publish_year"),
+            })
+        return results
+    except (ValueError, KeyError):
+        return None
+
+
+# ---------------------------------------------------------------------------
+# 12. HAL (Hyper Articles en Ligne — French national open archive)
 # ---------------------------------------------------------------------------
 
 HAL_BASE = "https://api.archives-ouvertes.fr/search/"

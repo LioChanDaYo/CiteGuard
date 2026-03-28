@@ -4,6 +4,6 @@ services:
     ports:
       - "7860:7860"
     environment:
-      - CROSSREF_MAIL=${CROSSREF_MAIL:-anonymous@example.com}
+      - CROSSREF_MAIL=${CROSSREF_MAIL:-citeguard.app@proton.me}
       - GROBID_URL=${GROBID_URL:-https://kermitt2-grobid.hf.space}
     restart: unless-stopped

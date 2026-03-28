@@ -203,6 +203,46 @@ def _split_acl_references(text: str) -> List[str]:
     return [r for r in refs if len(r) > 20]
 
 
+def _split_french_references(text: str) -> List[str]:
+    """Split French-style references: Author, Year, « Title », Journal.
+
+    French academic citations typically start with a capitalized surname
+    followed by an initial and a 4-digit year separated by commas, without
+    parentheses around the year.
+    Pattern: LastName, I., Year, ...
+    """
+    # Match lines starting with a capitalized word/phrase followed by a year:
+    # "Amossé, T., 2024, ..." or "Insee, 2025, ..." or "Di Paola V., 2023, ..."
+    # or "Observatoire des inégalités, 2025, ..."
+    _FR_REF_START = re.compile(
+        r'^[A-Z\u00C0-\u00DC][a-zA-Z\u00C0-\u024F\'\-.\xa0 ]*'  # Name (spaces, dots, nbsp for "Di Paola V.")
+        r'(?:,\s*[A-Z\u00C0-\u024F][\w.\-\xa0 ]*)*'              # Optional initials/co-authors
+        r',\s*(?:19|20)\d{2}\b'                                    # Comma then year
+    )
+    lines = text.split('\n')
+    refs: List[str] = []
+    current: List[str] = []
+
+    for line in lines:
+        stripped = line.strip()
+        if not stripped:
+            if current:
+                refs.append(' '.join(current))
+                current = []
+            continue
+
+        if _FR_REF_START.match(stripped) and current:
+            refs.append(' '.join(current))
+            current = [stripped]
+        else:
+            current.append(stripped)
+
+    if current:
+        refs.append(' '.join(current))
+
+    return [r for r in refs if len(r) > 20]
+
+
 def _split_blank_line_references(text: str) -> List[str]:
     """Split references by blank lines — each paragraph is one reference."""
     paragraphs = re.split(r'\n\s*\n', text)
@@ -510,10 +550,20 @@ def _extract_title(text: str) -> Optional[str]:
     # Remove DOI and ISBN portions for cleaner matching
     clean = DOI_RE.sub('', norm)
     clean = ISBN_RE.sub('', clean)
-    # Try to find a quoted or italicized title
+    # Try to find a quoted or italicized title (including French guillemets «»)
+    m = re.search(r'[\u00ab\u2039]\s*(.+?)\s*[\u00bb\u203a]', clean)
+    if m and len(m.group(1)) > 10:
+        return m.group(1)
     m = re.search(r'["\u201c](.+?)["\u201d]', clean)
     if m and len(m.group(1)) > 10:
         return m.group(1)
+    # French style without guillemets (books): Author, Year, Title, Publisher.
+    # Extract text between "Year, " and the next comma or period that looks like a publisher
+    m = re.search(r'(?:19|20)\d{2},\s+(.+?)(?:,\s+(?:\u00c9ditions|Editions|Ed\.|Presses|PUF|La\s+D\u00e9couverte|Minuit|Gallimard|Seuil|De\s+Gruyter|Springer|Cambridge|Oxford|Routledge)\b|\.?\s*$)', clean)
+    if m and len(m.group(1)) > 5:
+        candidate = m.group(1).strip().rstrip(',').rstrip('.')
+        if len(candidate) > 5 and not re.match(r'^[\d\s,\-]+$', candidate):
+            return candidate
     # APA: text between (Year). and next period
     m = re.search(r'\(\d{4}[^)]*\)\.\s*(.+?)\.', clean)
     if m and len(m.group(1)) > 10:
@@ -727,7 +777,12 @@ def extract_citations(text: str) -> List[Citation]:
     if _is_good_split(acl):
         candidates.append(acl)
 
-    # Strategy 5: Blank-line splitting (each paragraph = one reference)
+    # Strategy 5: French style (Author, Year, « Title », Journal)
+    french = _split_french_references(ref_section)
+    if _is_good_split(french):
+        candidates.append(french)
+
+    # Strategy 6: Blank-line splitting (each paragraph = one reference)
     blank = _split_blank_line_references(ref_section)
     if _is_good_split(blank):
         candidates.append(blank)
@@ -737,7 +792,7 @@ def extract_citations(text: str) -> List[Citation]:
         raw_refs = max(candidates, key=len)
     else:
         # Fallback: try any strategy that got > 0 results
-        all_attempts = [numbered, bracket, apa, acl, blank]
+        all_attempts = [numbered, bracket, apa, acl, french, blank]
         non_empty = [r for r in all_attempts if r]
         if non_empty:
             raw_refs = max(non_empty, key=len)

@@ -28,6 +28,7 @@ from scholarly_apis import (
     semantic_scholar_search,
     semantic_scholar_by_doi,
     openalex_search,
+    openlibrary_search,
     pubmed_search,
     pubmed_ecitmatch,
     pubmed_fetch,
@@ -453,6 +454,16 @@ def _verify_by_hal(citation: Citation) -> Optional[VerificationResult]:
     return _pick_best_match(citation, results, "hal")
 
 
+def _verify_by_openlibrary_search(citation: Citation) -> Optional[VerificationResult]:
+    """Verify books via Open Library title+author search (no ISBN needed)."""
+    query = citation.title or _build_search_query(citation)
+    if not query or len(query.strip()) < 8:
+        return None
+    author = citation.author or ""
+    results = openlibrary_search(query, author=author, limit=3)
+    return _pick_best_match(citation, results, "openlibrary")
+
+
 def _verify_by_semantic_scholar(citation: Citation) -> Optional[VerificationResult]:
     """Verify via Semantic Scholar (cross-discipline)."""
     # Try DOI first
@@ -564,8 +575,9 @@ def _pick_best_match(
     scored.sort(key=lambda x: x[0], reverse=True)
     best_score, best_sim, best_item = scored[0]
 
-    # Threshold: 0.50 for title-based matching, 0.35 for raw-text fallback
-    threshold = 0.50 if citation.title else 0.35
+    # Threshold: 0.65 for title-based matching, 0.45 for raw-text fallback
+    # Raised from 0.50/0.35 to reduce false positives on fabricated citations
+    threshold = 0.65 if citation.title else 0.45
     if best_sim < threshold:
         return None
 
@@ -579,25 +591,40 @@ def _pick_best_match(
     best_raw_author_sim = _author_similarity(citation.raw_text[:300], best_authors)
     best_author_sim = max(best_author_sim, best_raw_author_sim)
 
-    # Compute confidence from similarity (same logic as original engine)
+    # Compute confidence from similarity
     if best_sim >= 0.9:
         confidence = 90
     elif best_sim >= 0.7:
         confidence = int(best_sim * 100)
         if best_author_sim >= 0.2:
             confidence = min(90, confidence + 8)
-    elif best_sim >= 0.5:
+    elif best_sim >= 0.65:
         confidence = int(best_sim * 100)
         if best_author_sim >= 0.5:
-            confidence = min(85, confidence + 20)
+            confidence = min(80, confidence + 15)
         elif best_author_sim >= 0.2:
-            confidence = min(80, confidence + 12)
+            confidence = min(75, confidence + 8)
     else:
         confidence = int(best_sim * 100)
         if best_author_sim >= 0.5:
-            confidence = min(75, confidence + 25)
+            confidence = min(70, confidence + 20)
         elif best_author_sim >= 0.2:
-            confidence = min(65, confidence + 10)
+            confidence = min(60, confidence + 10)
+
+    # Penalty: no author overlap at all → cap confidence (likely wrong match)
+    if citation.author and best_authors and best_author_sim == 0.0:
+        confidence = min(confidence, 55)
+
+    # Penalty: year mismatch → reduce confidence
+    if citation.year and best_item.get("year"):
+        try:
+            year_diff = abs(int(citation.year) - int(str(best_item["year"])[:4]))
+            if year_diff >= 5:
+                confidence = min(confidence, 50)
+            elif year_diff >= 2:
+                confidence = max(0, confidence - 10)
+        except (ValueError, TypeError):
+            pass
 
     verdict = _verdict_from_confidence(confidence)
 
@@ -752,10 +779,10 @@ def _verify_one(cit: Citation, discipline: str = "unknown") -> VerificationResul
     elif discipline == "cs":
         cascade = [_verify_by_dblp, _verify_by_crossref_search, _verify_by_semantic_scholar]
     elif discipline in ("social_science", "humanities"):
-        cascade = [_verify_by_hal, _verify_by_crossref_search, _verify_by_semantic_scholar, _verify_by_openalex]
+        cascade = [_verify_by_hal, _verify_by_crossref_search, _verify_by_semantic_scholar, _verify_by_openalex, _verify_by_openlibrary_search]
     else:
-        # Unknown: broad coverage (includes HAL for French paper coverage)
-        cascade = [_verify_by_crossref_search, _verify_by_hal, _verify_by_semantic_scholar, _verify_by_openalex]
+        # Unknown: broad coverage (includes HAL for French papers, OpenLibrary for books)
+        cascade = [_verify_by_crossref_search, _verify_by_hal, _verify_by_semantic_scholar, _verify_by_openalex, _verify_by_openlibrary_search]
 
     # First pass: try each source, collect best result
     best_result: Optional[VerificationResult] = None
