@@ -568,14 +568,6 @@ def _extract_title(text: str) -> Optional[str]:
     m = re.search(r'\(\d{4}[^)]*\)\.\s*(.+?)\.', clean)
     if m and len(m.group(1)) > 10:
         return m.group(1).strip()
-    # Bracket-code style: "Author, Title, Journal Vol (Year), Pages."
-    # After author (text before first comma-separated title), extract the title part
-    m = re.match(r'^[A-Z][^,]+(?:,\s*[A-Z][^,]*)*,\s+(.+?)(?:,\s+(?:[A-Z][\w.\s]+\d|\d{4})|$)', clean)
-    if m and len(m.group(1)) > 10:
-        candidate = m.group(1).strip().rstrip(',').rstrip('.')
-        # Don't return page numbers or bare numbers as titles
-        if not re.match(r'^[\d\s,\-LlSs()]+$', candidate):
-            return candidate
     # CS/ML style: "Authors. Title. Venue, Year."
     # After splitting off author, take text up to the next sentence boundary
     _, rest = _split_author_rest(clean)
@@ -586,6 +578,14 @@ def _extract_title(text: str) -> Optional[str]:
             title = m.group(1).strip()
             if len(title) > 10:
                 return title
+    # Bracket-code style: "Author, Title, Journal Vol (Year), Pages."
+    # After author (text before first comma-separated title), extract the title part
+    m = re.match(r'^[A-Z][^,]+(?:,\s*[A-Z][^,]*)*,\s+(.+?)(?:,\s+(?:[A-Z][\w.\s]+\d|\d{4})|$)', clean)
+    if m and len(m.group(1)) > 10:
+        candidate = m.group(1).strip().rstrip(',').rstrip('.')
+        # Don't return page numbers or bare numbers as titles
+        if not re.match(r'^[\d\s,\-LlSs()]+$', candidate):
+            return candidate
     # ACL/NLP style: "Author1, Author2, and Author3. Year. Title. In Venue."
     # Look for "Year. Title." pattern
     m = re.search(r'(?:19|20)\d{2}[a-z]?\.\s+(.+?)(?:\.\s|\.?$)', clean)
